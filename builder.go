@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 )
 
@@ -30,11 +31,27 @@ func (b *Builder) Build(filename string) error {
 			dc = k
 		}
 		if v.Optional {
-			str, err := optionalSolution(v.Kind, b.short, k)
+			str, err := optionalSolution(v.st, v.Kind, b.short, k)
 			if err != nil {
 				return err
 			}
 			writer.WriteString(str)
+			if v.Kind == "struct" {
+				err := subStructSolution(v.st.Type, v.sv, filename, b.short, k, &writer)
+				if err != nil {
+					return err
+				}
+				continue
+			}
+
+			if v.Kind == "ptr" && v.sv.Type().Elem().Kind() == reflect.Struct {
+				err := subStructSolution(v.sv.Type().Elem(), v.sv.Elem(), filename, b.short, k, &writer)
+				if err != nil {
+					return err
+				}
+				continue
+			}
+
 			if v.Len != "" {
 				str, err := lenSolution(v.Kind, b.short, k, dc, v.Len)
 				if err != nil {
@@ -140,7 +157,7 @@ func (b *Builder) Build(filename string) error {
 			continue
 		}
 		if v.Required {
-			str, err := requiredSolution(v.Kind, b.short, k, dc)
+			str, err := requiredSolution(v.st, v.Kind, b.short, k, dc)
 			if err != nil {
 				return err
 			}
@@ -254,48 +271,77 @@ func (b *Builder) Build(filename string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 	_, err = f.Write(writer.Bytes())
+	_ = f.Close()
 	return err
 }
 
-func requiredSolution(kind string, shortName, fieldName, dc string) (string, error) {
+func requiredSolution(
+	st reflect.StructField, kind string, shortName, fieldName, dc string) (string, error) {
 	var str string
 	switch kind {
 	case "string":
-		str = fmt.Sprintf(`if %s.%s ==""{
-return errors.New("%s can't be empty")}`, shortName, fieldName, dc)
+		format := `if %s.%s ==""{
+	return errors.New("%s can't be empty")
+}`
+		str = fmt.Sprintf(format, shortName, fieldName, dc)
 	case "int8", "uint8",
 		"int16", "uint16",
 		"int32", "uint32",
 		"int", "uint",
 		"int64", "uint64",
 		"float32", "float64":
-		str = fmt.Sprintf(`if %s.%s ==0{
-return errors.New("%s can't be empty")}`, shortName, fieldName, dc)
+		format := `if %s.%s ==0{
+	return errors.New("%s can't be empty")
+}`
+		str = fmt.Sprintf(format, shortName, fieldName, dc)
 	case "ptr":
-		str = fmt.Sprintf(`if %s.%s ==nil{
-return errors.New("%s can't be empty")}`, shortName, fieldName, dc)
+		format := `if %s.%s ==nil{
+	return errors.New("%s can't be empty")
+}`
+
+		str = fmt.Sprintf(format, shortName, fieldName, dc)
+	case "slice", "array":
+		format := `if len(%s.%s) ==0{
+	return errors.New("%s can't be empty")
+}`
+		str = fmt.Sprintf(format, shortName, fieldName, dc)
+	case "struct":
+		format := `if reflect.DeepEqual(%s.%s,%s{}){
+	return errors.New("%s can't be empty")
+}`
+
+		str = fmt.Sprintf(format, shortName, fieldName, st.Type.Name(), dc)
 	default:
 		return "", fmt.Errorf("%s kind unsupported", kind)
 	}
 	return str, nil
 }
 
-func optionalSolution(kind string, shortName, fieldName string) (string, error) {
+func optionalSolution(
+	st reflect.StructField, kind string, shortName, fieldName string) (string, error) {
 	var str string
 	switch kind {
 	case "string":
-		str = fmt.Sprintf(`if %s.%s !=""{`, shortName, fieldName)
+		format := `if %s.%s !=""{`
+		str = fmt.Sprintf(format, shortName, fieldName)
 	case "int8", "uint8",
 		"int16", "uint16",
 		"int32", "uint32",
 		"int", "uint",
 		"int64", "uint64",
 		"float32", "float64":
-		str = fmt.Sprintf(`if %s.%s !=0{`, shortName, fieldName)
+		format := `if %s.%s !=0{`
+		str = fmt.Sprintf(format, shortName, fieldName)
 	case "ptr":
-		str = fmt.Sprintf(`if %s.%s !=nil{`, shortName, fieldName)
+		format := `if %s.%s !=nil{`
+		str = fmt.Sprintf(format, shortName, fieldName)
+	case "slice", "array":
+		format := `if len(%s.%s)!=0{`
+		str = fmt.Sprintf(format, shortName, fieldName)
+	case "struct":
+		format := `if !reflect.DeepEqual(%s.%s,%s{}){`
+		str = fmt.Sprintf(format, shortName, fieldName, st.Type.Name())
 	default:
 		return "", fmt.Errorf("%s kind unsupported", kind)
 	}
@@ -798,4 +844,27 @@ for _,v:=range %sNiColl{
 }`
 	str := fmt.Sprintf(format, dc, ina, dc, shortName, fieldName, dc)
 	return str, nil
+}
+
+func subStructSolution(
+	st reflect.Type, sv reflect.Value, filename, shortName, fieldName string,
+	writer *bytes.Buffer) error {
+	sm := NewMatcherWithReflect(st, sv)
+	result, err := sm.GetDefined("dike")
+	if err != nil {
+		return err
+	}
+	name, short := sm.GetStructName()
+	sb := NewBuilder(name, short, result)
+	err = sb.Build(filename)
+	if err != nil {
+		return err
+	}
+	format := `if err := %s.%s.Check();err !=nil {
+	return err
+}`
+	str := fmt.Sprintf(format, shortName, fieldName)
+	writer.WriteString(str)
+	writer.WriteString("}")
+	return nil
 }

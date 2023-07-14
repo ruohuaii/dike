@@ -1,13 +1,11 @@
 package dike
 
 import (
-	"reflect"
 	"testing"
 )
 
 func Test_Builder(t *testing.T) {
-	ft := reflect.TypeOf((*TBuilder)(nil)).Elem()
-	matcher := NewMatcher(ft)
+	matcher := NewMatcher(&TBuilder{})
 	result, err := matcher.GetDefined("dike")
 	if err != nil {
 		t.Fatal("error:", err)

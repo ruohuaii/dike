@@ -1,7 +1,6 @@
 package dike
 
 import (
-	"reflect"
 	"testing"
 )
 
@@ -11,8 +10,7 @@ type TMatcher struct {
 }
 
 func Test_GetRelation(t *testing.T) {
-	ft := reflect.TypeOf((*TMatcher)(nil)).Elem()
-	matcher := NewMatcher(ft)
+	matcher := NewMatcher(&TMatcher{})
 	result, err := matcher.GetDefined("dike")
 	if err != nil {
 		t.Fatal("error:", err)

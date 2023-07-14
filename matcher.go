@@ -1,6 +1,7 @@
 package dike
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -34,11 +35,34 @@ type Rule struct {
 	Regexp   string
 	//Dc 字段描述,例如json序列化时将其指定为dc
 	Dc string
+
+	st reflect.StructField
+	sv reflect.Value
 }
 
-func NewMatcher(t reflect.Type) *Matcher {
+func NewMatcher(ptr interface{}) *Matcher {
+	if ptr == nil {
+		panic("NewMatcher received nil")
+	}
+	t := reflect.TypeOf(ptr)
+	v := reflect.ValueOf(ptr)
+	m := &Matcher{
+		t: t,
+		v: v,
+	}
+	err := m.check()
+	if err != nil {
+		panic(err)
+	}
+	m.t = m.t.Elem()
+	m.v = m.v.Elem()
+	return m
+}
+
+func NewMatcherWithReflect(t reflect.Type, v reflect.Value) *Matcher {
 	return &Matcher{
 		t: t,
+		v: v,
 	}
 }
 
@@ -52,15 +76,20 @@ func (m *Matcher) GetStructName() (string, string) {
 func (m *Matcher) GetDefined(tag string) (map[string]*Rule, error) {
 	rules := make(map[string]*Rule)
 	for i := 0; i < m.t.NumField(); i++ {
-		field := m.t.Field(i)
-		defined := field.Tag.Get(tag)
-		kind := field.Type.String()
+		if !m.v.IsValid() {
+			return nil, errors.New("invalid reflected value or field is not accessible")
+		}
+		st := m.t.Field(i)
+		defined := st.Tag.Get(tag)
+		sv := m.v.Field(i)
+		kind := sv.Type().Kind().String()
 		rule, err := m.analyze(kind, defined)
 		if err != nil {
 			return nil, err
 		}
-		rules[field.Name] = rule
-		fmt.Println("defined:", defined)
+		rule.st = st
+		rule.sv = sv
+		rules[st.Name] = rule
 	}
 	return rules, nil
 }
@@ -405,4 +434,12 @@ func (m *Matcher) checkKindVal(
 		}
 	}
 	return nil
+}
+
+func (m *Matcher) check() error {
+	vT := m.v.Type()
+	if vT.Kind() == reflect.Ptr && vT.Elem().Kind() == reflect.Struct {
+		return nil
+	}
+	return fmt.Errorf("please enter a pointer of type %s", m.t.Name())
 }
