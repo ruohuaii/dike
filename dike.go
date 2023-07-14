@@ -1,6 +1,6 @@
 package dike
 
-func Work(ptr interface{}, sourceFile string) {
+func GenerateCheck(ptr interface{}, sourceFile string) {
 	matcher := NewMatcher(ptr)
 	result, err := matcher.GetDefined("dike")
 	if err != nil {
